@@ -1,0 +1,58 @@
+[tools]
+go = "1.24.0"
+bats = "1.14.0"
+prek = "0.5.7"
+golangci-lint = "2.15.0"
+jactionlint = "2.4.0"
+zizmor = "1.32.0"
+gh = "2.103.3"
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.1.4"
+
+[tasks.default]
+depends = ["build"]
+
+[tasks.build]
+description = "Build bashcoat binary"
+run = "go build -trimpath -o bin/bashcoat ./cmd/bashcoat"
+
+[tasks.test]
+description = "Run Go unit tests with race detector"
+run = "go test -v -race ./..."
+
+[tasks.lint-go]
+description = "Lint Go source files with golangci-lint"
+run = "golangci-lint run"
+
+[tasks.lint-actions]
+description = "Lint GitHub Actions workflows with jactionlint"
+run = "jactionlint"
+
+[tasks.scan-security]
+description = "Scan GitHub Actions workflows for security vulnerabilities with zizmor"
+run = "zizmor .github/workflows/"
+
+[tasks.verify-actions-lock]
+description = "Verify GitHub Actions lockfile with gh actions-lock"
+run = [
+  "gh extension list | grep -q actions-lock || gh extension install github/gh-actions-lock --pin v0.1.4",
+  "gh actions-lock --verify-local",
+]
+
+[tasks.scan-vulns]
+description = "Scan Go source and dependencies for vulnerabilities with govulncheck"
+run = "govulncheck ./..."
+
+[tasks.lint]
+description = "Run all linters and security scanners"
+depends = ["lint-go", "lint-actions", "scan-security", "verify-actions-lock", "scan-vulns"]
+
+[tasks.setup-hooks]
+description = "Install Git pre-commit hooks using prek"
+run = [
+  "gh extension list | grep -q actions-lock || gh extension install github/gh-actions-lock --pin v0.1.4",
+  "prek install",
+]
+
+[tasks.clean]
+description = "Clean build artifacts"
+run = "rm -rf bin/ dist/ *.lcov *.trace"

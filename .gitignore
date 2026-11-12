@@ -1,0 +1,23 @@
+# Binaries
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test artifacts & coverage
+coverage/
+*.lcov
+*.out
+*.trace
+.bashcoat-trace*
+lcov.info
+
+# Go
+vendor/
+
+# OS specific
+.DS_Store
+Thumbs.db

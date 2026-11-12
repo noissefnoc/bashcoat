@@ -1,0 +1,7 @@
+[[repos]]
+repo = "builtin"
+hooks = [
+  { id = "jactionlint" },
+  { id = "zizmor" },
+  { id = "actions-lock" },
+]
