@@ -13,6 +13,7 @@ coverage/
 *.out
 *.trace
 .bashcoat-trace*
+*.bashcoat.bak
 lcov.info
 
 # Go
