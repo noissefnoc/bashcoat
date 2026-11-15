@@ -28,6 +28,22 @@ For years, measuring code coverage in Bash has required [kcov](https://github.co
 
 ## Installation
 
+### Prebuilt Binaries (GitHub Releases)
+
+Download the archive for your OS/architecture from [GitHub Releases](https://github.com/noissefnoc/bashcoat/releases) and extract `bashcoat` into a directory on your `PATH`:
+
+```bash
+# Example: Linux amd64
+curl -fsSL https://github.com/noissefnoc/bashcoat/releases/latest/download/bashcoat_0.1.0_linux_amd64.tar.gz \
+  | tar -xz -C /usr/local/bin bashcoat
+```
+
+> [!NOTE]
+> On macOS, if you download the `.tar.gz` archive via a web browser, Gatekeeper attaches a quarantine attribute. Remove it before running:
+> ```bash
+> xattr -d com.apple.quarantine ./bashcoat
+> ```
+
 ### With Go (1.27+)
 
 ```bash
@@ -37,9 +53,12 @@ go install github.com/noissefnoc/bashcoat/cmd/bashcoat@latest
 ### With mise
 
 ```toml
-# .mise.toml
+# .mise.toml (prebuilt GitHub Release binary)
 [tools]
-"go:github.com/noissefnoc/bashcoat/cmd/bashcoat" = "latest"
+"github:noissefnoc/bashcoat" = "latest"
+
+# Or build from source via Go
+# "go:github.com/noissefnoc/bashcoat/cmd/bashcoat" = "latest"
 ```
 
 ---
