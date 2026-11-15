@@ -31,7 +31,7 @@ Run `bashcoat`, `bashcov`, and `kcov` side-by-side inside an Ubuntu 26.04 contai
    docker compose -f test/compare/compose.yaml run --rm -e TOOLS="bashcoat kcov" compare ./test/compare/run.sh bats-core
    ```
 
-4. Run against any custom repository (e.g. a fork or `bash-core`-style repo):
+4. Run against any custom repository (e.g. a fork or `bats-core`-style repo):
 
    ```bash
    docker compose -f test/compare/compose.yaml run --rm \
