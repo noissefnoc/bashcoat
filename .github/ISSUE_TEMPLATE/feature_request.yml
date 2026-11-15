@@ -1,0 +1,28 @@
+name: Feature Request / Idea
+description: Suggest an enhancement or share feedback for bashcoat
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for sharing an idea! Please note that `bashcoat` is a personal project maintained on a best-effort basis, and feature PRs are not currently accepted without prior discussion here.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What problem are you trying to solve, or what workflow would this improve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: How would you expect `bashcoat` (CLI flags, output, LCOV, etc.) to behave?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds or alternative approaches you've considered.
