@@ -170,7 +170,24 @@ jobs:
   genhtml lcov.info -o coverage-html
   ```
 - **Editor / IDE**: Extensions such as VS Code's [Coverage Gutters](https://marketplace.visualstudio.com/items?itemName=ryanluker.vscode-coverage-gutters) read `lcov.info` directly to highlight covered and uncovered lines inline.
-- **Format conversion & CI**: Tools like [`lcov_cobertura`](https://github.com/eriwen/lcov-to-cobertura-xml) convert `lcov.info` to Cobertura XML, and services such as Codecov and Coveralls accept `lcov.info` natively.
+- **Format conversion & CI**: Services such as Codecov and Coveralls accept `lcov.info` natively. For tools that require **Cobertura XML**—including **GitHub Code Quality (`actions/upload-code-coverage`)**, which fails if given a non-Cobertura report—convert `lcov.info` with [`lcov_cobertura`](https://github.com/eriwen/lcov-to-cobertura-xml) before uploading:
+  ```bash
+  pip install lcov_cobertura
+  lcov_cobertura lcov.info -o coverage.xml
+  ```
+  In GitHub Actions (with `code-quality: write` permission on the job):
+  ```yaml
+  - name: Convert LCOV to Cobertura XML
+    run: |
+      pip install lcov_cobertura
+      lcov_cobertura lcov.info -o coverage.xml
+
+  - name: Upload to GitHub Code Quality
+    uses: actions/upload-code-coverage@v1
+    with:
+      file: coverage.xml
+      language: Shell
+  ```
 
 ---
 
