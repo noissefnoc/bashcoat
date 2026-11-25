@@ -8,6 +8,7 @@ zizmor = "1.33.1"
 gh = "2.105.0"
 "go:golang.org/x/vuln/cmd/govulncheck" = "1.10.0"
 shellcheck = "0.11.0"
+goreleaser = "2.20.3"
 
 [tasks.default]
 depends = ["build"]
@@ -43,9 +44,13 @@ run = [
 description = "Scan Go source and dependencies for vulnerabilities with govulncheck"
 run = "govulncheck ./..."
 
+[tasks.lint-goreleaser]
+description = "Validate .goreleaser.yaml configuration"
+run = "goreleaser check"
+
 [tasks.lint]
 description = "Run all linters and security scanners"
-depends = ["lint-go", "lint-actions", "scan-security", "verify-actions-lock", "scan-vulns"]
+depends = ["lint-go", "lint-actions", "scan-security", "verify-actions-lock", "scan-vulns", "lint-goreleaser"]
 
 [tasks.setup-hooks]
 description = "Install Git pre-commit hooks using prek"
