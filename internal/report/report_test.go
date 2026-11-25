@@ -2,8 +2,10 @@ package report
 
 import (
 	"bytes"
+	"encoding/xml"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noissefnoc/bashcoat/internal/trace"
 )
@@ -149,5 +151,173 @@ func TestWriteSummary_ZeroLinesShowsNAAndWideCharsAlign(t *testing.T) {
 	}
 	if strings.Count(buf.String(), "     N/A") != 3 {
 		t.Errorf("expected 3 N/A entries (2 rows + Total), got:\n%s", buf.String())
+	}
+}
+
+func TestWriteCobertura(t *testing.T) {
+	profiles := []*trace.Profile{
+		{
+			SourceFile: "src/lib/b.sh",
+			Hits: map[int]int{
+				10: 0,
+				2:  3,
+			},
+			LinesFound: 2,
+			LinesHit:   1,
+		},
+		{
+			SourceFile: "src/lib/a.sh",
+			Hits: map[int]int{
+				5: 1,
+				7: 2,
+			},
+			LinesFound: 2,
+			LinesHit:   2,
+		},
+		{
+			SourceFile: "root.sh",
+			Hits: map[int]int{
+				3: 1,
+			},
+			LinesFound: 1,
+			LinesHit:   1,
+		},
+	}
+
+	var buf bytes.Buffer
+	opts := CoberturaOptions{
+		SourceDir: ".",
+		Version:   "0.2.0",
+		Timestamp: time.Unix(1700000000, 0).UTC(),
+	}
+	if err := WriteCoberturaWithOptions(&buf, profiles, opts); err != nil {
+		t.Fatalf("WriteCoberturaWithOptions failed: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.HasPrefix(out, xml.Header+coberturaDoctype) {
+		t.Fatalf("expected XML header and Cobertura DOCTYPE, got:\n%s", out)
+	}
+
+	var parsed coberturaCoverage
+	if err := xml.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("generated Cobertura XML failed to unmarshal: %v\n%s", err, out)
+	}
+
+	if parsed.Version != "0.2.0" {
+		t.Errorf("version = %q, want %q", parsed.Version, "0.2.0")
+	}
+	if parsed.Timestamp != 1700000000 {
+		t.Errorf("timestamp = %d, want 1700000000", parsed.Timestamp)
+	}
+	if parsed.LinesValid != 5 || parsed.LinesCovered != 4 {
+		t.Errorf("root lines = %d/%d, want 4/5", parsed.LinesCovered, parsed.LinesValid)
+	}
+	if parsed.LineRate != 0.8 {
+		t.Errorf("root line-rate = %v, want 0.8", parsed.LineRate)
+	}
+	if len(parsed.Sources.Source) != 1 || parsed.Sources.Source[0] != "." {
+		t.Errorf("sources = %v, want [.]", parsed.Sources.Source)
+	}
+	if len(parsed.Packages.Packages) != 2 {
+		t.Fatalf("packages len = %d, want 2", len(parsed.Packages.Packages))
+	}
+
+	// Packages must be sorted deterministically: "." before "src/lib"
+	pkg0 := parsed.Packages.Packages[0]
+	if pkg0.Name != "." || pkg0.LineRate != 1 {
+		t.Errorf("pkg[0] = %+v, want name='.' line-rate=1", pkg0)
+	}
+	if len(pkg0.Classes.Classes) != 1 || pkg0.Classes.Classes[0].Filename != "root.sh" || pkg0.Classes.Classes[0].Name != "root.sh" {
+		t.Errorf("pkg[0].classes = %+v, want single root.sh class", pkg0.Classes.Classes)
+	}
+
+	pkg1 := parsed.Packages.Packages[1]
+	if pkg1.Name != "src/lib" || pkg1.LineRate != 0.75 {
+		t.Errorf("pkg[1] = %+v, want name='src/lib' line-rate=0.75", pkg1)
+	}
+	if len(pkg1.Classes.Classes) != 2 {
+		t.Fatalf("pkg[1].classes len = %d, want 2", len(pkg1.Classes.Classes))
+	}
+	// Classes sorted by filename: a.sh before b.sh
+	clsA := pkg1.Classes.Classes[0]
+	clsB := pkg1.Classes.Classes[1]
+	if clsA.Filename != "src/lib/a.sh" || clsA.Name != "a.sh" || clsA.LineRate != 1 {
+		t.Errorf("clsA = %+v", clsA)
+	}
+	if clsB.Filename != "src/lib/b.sh" || clsB.Name != "b.sh" || clsB.LineRate != 0.5 {
+		t.Errorf("clsB = %+v", clsB)
+	}
+	// Lines sorted ascending: line 2 (hits=3), then line 10 (hits=0)
+	if len(clsB.Lines.Lines) != 2 || clsB.Lines.Lines[0].Number != 2 || clsB.Lines.Lines[0].Hits != 3 || clsB.Lines.Lines[1].Number != 10 || clsB.Lines.Lines[1].Hits != 0 {
+		t.Errorf("clsB lines = %+v, want [{2 3 false} {10 0 false}]", clsB.Lines.Lines)
+	}
+}
+
+func TestWriteCobertura_EmptyAndZeroLines(t *testing.T) {
+	// Empty profiles list must still include required <packages> element
+	var buf bytes.Buffer
+	if err := WriteCoberturaWithOptions(&buf, nil, CoberturaOptions{Timestamp: time.Unix(1, 0)}); err != nil {
+		t.Fatalf("WriteCoberturaWithOptions(nil) failed: %v", err)
+	}
+	emptyOut := buf.String()
+	if !strings.Contains(emptyOut, "<packages></packages>") {
+		t.Errorf("expected required <packages></packages> for empty report, got:\n%s", emptyOut)
+	}
+	if strings.Contains(emptyOut, "NaN") || strings.Contains(emptyOut, "Inf") {
+		t.Errorf("unexpected NaN/Inf in empty report:\n%s", emptyOut)
+	}
+
+	// File with 0 executable lines must still emit required <methods> and <lines> elements
+	buf.Reset()
+	err := WriteCoberturaWithOptions(&buf, []*trace.Profile{
+		{SourceFile: "comments_only.sh", Hits: map[int]int{}, LinesFound: 0, LinesHit: 0},
+	}, CoberturaOptions{Timestamp: time.Unix(1, 0)})
+	if err != nil {
+		t.Fatalf("WriteCoberturaWithOptions(zero-lines) failed: %v", err)
+	}
+	zeroOut := buf.String()
+	if !strings.Contains(zeroOut, "<methods></methods>") || !strings.Contains(zeroOut, "<lines></lines>") {
+		t.Errorf("expected required <methods> and <lines> elements for zero-line file, got:\n%s", zeroOut)
+	}
+	if strings.Contains(zeroOut, "NaN") || strings.Contains(zeroOut, "Inf") {
+		t.Errorf("unexpected NaN/Inf in zero-line report:\n%s", zeroOut)
+	}
+	var parsed coberturaCoverage
+	if err := xml.Unmarshal([]byte(zeroOut), &parsed); err != nil {
+		t.Fatalf("zero-line XML failed to unmarshal: %v", err)
+	}
+	if parsed.LineRate != 0 {
+		t.Errorf("expected line-rate 0 for zero-line report, got %v", parsed.LineRate)
+	}
+}
+
+func TestWriteCobertura_SpecialCharsAndDefaults(t *testing.T) {
+	var buf bytes.Buffer
+	profiles := []*trace.Profile{
+		{
+			SourceFile: `dir/a&b<"c">.sh`,
+			Hits:       map[int]int{1: 1},
+			LinesFound: 1,
+			LinesHit:   1,
+		},
+	}
+	if err := WriteCobertura(&buf, profiles); err != nil {
+		t.Fatalf("WriteCobertura failed: %v", err)
+	}
+
+	var parsed coberturaCoverage
+	if err := xml.Unmarshal(buf.Bytes(), &parsed); err != nil {
+		t.Fatalf("XML with special filename chars failed to unmarshal: %v\n%s", err, buf.String())
+	}
+	if parsed.Version != "bashcoat" {
+		t.Errorf("default version = %q, want bashcoat", parsed.Version)
+	}
+	if parsed.Timestamp <= 0 {
+		t.Errorf("expected positive default timestamp, got %d", parsed.Timestamp)
+	}
+	gotFilename := parsed.Packages.Packages[0].Classes.Classes[0].Filename
+	if gotFilename != `dir/a&b<"c">.sh` {
+		t.Errorf("round-tripped filename = %q, want %q", gotFilename, `dir/a&b<"c">.sh`)
 	}
 }

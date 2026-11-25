@@ -1,4 +1,4 @@
-// Package report formats collected coverage profiles into LCOV and human-readable summary tables.
+// Package report formats collected coverage profiles into LCOV, Cobertura XML, and human-readable summary tables.
 package report
 
 import (
