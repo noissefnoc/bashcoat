@@ -19,6 +19,11 @@ import (
 // Version is the CLI version string, overridable via -ldflags at build time.
 var Version = "dev"
 
+const (
+	formatLCOV      = "lcov"
+	formatCobertura = "cobertura"
+)
+
 type stringSliceFlag []string
 
 func (s *stringSliceFlag) String() string {
@@ -37,6 +42,7 @@ func (s *stringSliceFlag) Set(val string) error {
 func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) int {
 	var targets stringSliceFlag
 	var outputFile string
+	var format string
 	var showSummary bool
 	var quiet bool
 	var version bool
@@ -46,8 +52,10 @@ func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 
 	fs.Var(&targets, "target", "Target script path or glob pattern to measure (repeatable, e.g. -target 'src/**/*.sh')")
 	fs.Var(&targets, "t", "Alias for -target")
-	fs.StringVar(&outputFile, "output", "lcov.info", "LCOV report output file path (set to empty to disable)")
+	fs.StringVar(&outputFile, "output", "lcov.info", `Report output file path (default: "lcov.info" for lcov, "coverage.xml" for cobertura; set to empty to disable)`)
 	fs.StringVar(&outputFile, "o", "lcov.info", "Alias for -output")
+	fs.StringVar(&format, "format", formatLCOV, "Report output format: lcov or cobertura")
+	fs.StringVar(&format, "f", formatLCOV, "Alias for -format")
 	fs.BoolVar(&showSummary, "summary", true, "Print coverage summary table to stdout")
 	fs.BoolVar(&quiet, "quiet", false, "Suppress summary table and diagnostic logs")
 	fs.BoolVar(&quiet, "q", false, "Alias for -quiet")
@@ -60,7 +68,8 @@ func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		_, _ = fmt.Fprintf(errOut, "  bashcoat [options] -t <script.sh> -- <test_command> [args...]\n\n")
 		_, _ = fmt.Fprintf(errOut, "Examples:\n")
 		_, _ = fmt.Fprintf(errOut, "  bashcoat -t src/lib.sh -- bats test/lib.bats\n")
-		_, _ = fmt.Fprintf(errOut, "  bashcoat -t 'src/**/*.sh' -o coverage.lcov -- ./run_tests.sh\n\n")
+		_, _ = fmt.Fprintf(errOut, "  bashcoat -t 'src/**/*.sh' -o coverage.lcov -- ./run_tests.sh\n")
+		_, _ = fmt.Fprintf(errOut, "  bashcoat -t 'src/**/*.sh' -f cobertura -o coverage.xml -- bats test/\n\n")
 		_, _ = fmt.Fprintf(errOut, "Options:\n")
 		fs.PrintDefaults()
 	}
@@ -74,6 +83,23 @@ func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 	if version {
 		_, _ = fmt.Fprintf(out, "bashcoat version %s\n", resolveVersion())
 		return 0
+	}
+
+	format = strings.ToLower(strings.TrimSpace(format))
+	if format != formatLCOV && format != formatCobertura {
+		_, _ = fmt.Fprintf(errOut, "error: unsupported format %q (supported: lcov, cobertura)\n", format)
+		fs.Usage()
+		return 2
+	}
+
+	outputExplicit := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "o" || f.Name == "output" {
+			outputExplicit = true
+		}
+	})
+	if !outputExplicit {
+		outputFile = defaultOutputFile(format)
 	}
 
 	if len(targets) == 0 {
@@ -103,10 +129,10 @@ func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		return exitCode
 	}
 
-	// Write LCOV output file if configured
+	// Write coverage report file if configured
 	if outputFile != "" {
-		if err := writeLCOVFile(outputFile, profiles); err != nil {
-			_, _ = fmt.Fprintf(errOut, "error writing LCOV report to %s: %v\n", outputFile, err)
+		if err := writeReportFile(outputFile, format, profiles); err != nil {
+			_, _ = fmt.Fprintf(errOut, "error writing %s report to %s: %v\n", format, outputFile, err)
 			return 1
 		}
 	}
@@ -120,6 +146,13 @@ func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 	}
 
 	return exitCode
+}
+
+func defaultOutputFile(format string) string {
+	if format == formatCobertura {
+		return "coverage.xml"
+	}
+	return "lcov.info"
 }
 
 func resolveVersion() string {
@@ -147,7 +180,7 @@ func HasQuietFlag(args []string) bool {
 	return quiet
 }
 
-func writeLCOVFile(outputFile string, profiles []*trace.Profile) error {
+func writeReportFile(outputFile, format string, profiles []*trace.Profile) error {
 	dir := filepath.Dir(outputFile)
 	if dir == "" {
 		dir = "."
@@ -158,7 +191,7 @@ func writeLCOVFile(outputFile string, profiles []*trace.Profile) error {
 		}
 	}
 
-	tmp, err := os.CreateTemp(dir, ".bashcoat-lcov-*")
+	tmp, err := os.CreateTemp(dir, ".bashcoat-report-*")
 	if err != nil {
 		return err
 	}
@@ -170,7 +203,17 @@ func writeLCOVFile(outputFile string, profiles []*trace.Profile) error {
 		}
 	}()
 
-	if err := report.WriteLCOV(tmp, profiles); err != nil {
+	switch format {
+	case formatLCOV:
+		err = report.WriteLCOV(tmp, profiles)
+	case formatCobertura:
+		err = report.WriteCoberturaWithOptions(tmp, profiles, report.CoberturaOptions{
+			Version: resolveVersion(),
+		})
+	default:
+		err = fmt.Errorf("unsupported format %q", format)
+	}
+	if err != nil {
 		_ = tmp.Close()
 		return err
 	}
@@ -200,6 +243,10 @@ func splitFlagAndCmdArgs(args []string) ([]string, []string) {
 		"--o":      true,
 		"-output":  true,
 		"--output": true,
+		"-f":       true,
+		"--f":      true,
+		"-format":  true,
+		"--format": true,
 	}
 
 	for i := 0; i < len(args); i++ {

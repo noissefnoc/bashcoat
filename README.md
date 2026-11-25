@@ -2,7 +2,7 @@
 
 Fast, lightweight C0 code coverage tool for **Bash 5.0+** scripts.
 
-`bashcoat` wraps your target Bash scripts in lightweight instrumentation using Bash's built-in `BASH_XTRACEFD`, executes your test suite (e.g. Bats, shUnit2, or custom scripts), and outputs standard **LCOV (`lcov.info`)** reports and clean terminal summaries.
+`bashcoat` wraps your target Bash scripts in lightweight instrumentation using Bash's built-in `BASH_XTRACEFD`, executes your test suite (e.g. Bats, shUnit2, or custom scripts), and outputs standard **LCOV (`lcov.info`)** or **Cobertura XML (`coverage.xml`)** reports alongside clean terminal summaries.
 
 > [!NOTE]
 > **Requirements**: `bashcoat` requires **Bash 5.0 or newer** at runtime. On macOS, the system `/bin/bash` is Bash 3.2; install modern Bash via Homebrew (`brew install bash`) and ensure it precedes `/bin/bash` in `PATH` or your script shebang (`#!/usr/bin/env bash`). Scripts executed under Bash `< 5.0` will exit early with a clear error.
@@ -22,7 +22,7 @@ For years, measuring code coverage in Bash has required [kcov](https://github.co
 | **Unprivileged Docker / CI** | ❌ (requires `SYS_PTRACE`) | ✅ | ✅ **No special caps** |
 | **Runtime Dependencies** | C++ compiler, elf/dwarf libs | Ruby runtime & gems | **Zero (single binary)** |
 | **AST-Precise Line Detection** | DWARF debug symbols | Regex | **Go Bash AST parser** |
-| **Output Format** | Cobertura / HTML | SimpleCov / HTML | **Standard LCOV & Table** |
+| **Output Format** | Cobertura / HTML | SimpleCov / HTML | **LCOV, Cobertura XML & Table** |
 
 ---
 
@@ -113,7 +113,8 @@ Usage:
 
 Options:
   -t, -target <path/glob>   Target script path or glob pattern to measure (repeatable)
-  -o, -output <path>        LCOV report output file path (default: "lcov.info", "" to disable)
+  -f, -format <format>      Report output format: lcov or cobertura (default: "lcov")
+  -o, -output <path>        Report output file path (default: "lcov.info" for lcov, "coverage.xml" for cobertura; "" to disable)
   -summary                  Print coverage summary table to stdout (default: true)
   -q, -quiet                Suppress summary table and diagnostic logs
   -v, -version              Print version information
@@ -160,34 +161,29 @@ jobs:
 
 ---
 
-## Viewing & Converting LCOV Reports
+## Report Formats & Integrations
 
-`bashcoat` outputs standard `lcov.info`, so you can inspect or convert it with existing LCOV ecosystem tools:
+`bashcoat` natively outputs **LCOV (`lcov.info`)** and **Cobertura XML (`coverage.xml`)**:
 
-- **HTML report (`genhtml` from `lcov`)**:
-  ```bash
-  # macOS: brew install lcov  /  Ubuntu: sudo apt-get install lcov
-  genhtml lcov.info -o coverage-html
-  ```
-- **Editor / IDE**: Extensions such as VS Code's [Coverage Gutters](https://marketplace.visualstudio.com/items?itemName=ryanluker.vscode-coverage-gutters) read `lcov.info` directly to highlight covered and uncovered lines inline.
-- **Format conversion & CI**: Services such as Codecov and Coveralls accept `lcov.info` natively. For tools that require **Cobertura XML**—including **GitHub Code Quality (`actions/upload-code-coverage`)**, which fails if given a non-Cobertura report—convert `lcov.info` with [`lcov_cobertura`](https://github.com/eriwen/lcov-to-cobertura-xml) before uploading:
-  ```bash
-  pip install lcov_cobertura
-  lcov_cobertura lcov.info -o coverage.xml
-  ```
-  In GitHub Actions (with `code-quality: write` permission on the job):
+- **GitHub Code Quality (`actions/upload-code-coverage`)**: Pass `-f cobertura` to output Cobertura XML directly (no external converter needed). In GitHub Actions (with `code-quality: write` permission on the job):
   ```yaml
-  - name: Convert LCOV to Cobertura XML
-    run: |
-      pip install lcov_cobertura
-      lcov_cobertura lcov.info -o coverage.xml
+  - name: Run tests with coverage
+    run: bashcoat -t 'src/**/*.sh' -f cobertura -o coverage.xml -- bats test/
 
   - name: Upload to GitHub Code Quality
     uses: actions/upload-code-coverage@v1
     with:
       file: coverage.xml
       language: Shell
+      label: code-coverage/bashcoat
   ```
+- **HTML report (`genhtml` from `lcov`)**:
+  ```bash
+  # macOS: brew install lcov  /  Ubuntu: sudo apt-get install lcov
+  genhtml lcov.info -o coverage-html
+  ```
+- **Editor / IDE**: Extensions such as VS Code's [Coverage Gutters](https://marketplace.visualstudio.com/items?itemName=ryanluker.vscode-coverage-gutters) read `lcov.info` directly to highlight covered and uncovered lines inline.
+- **Other CI services**: Services such as Codecov, Coveralls, SonarQube, Jenkins, and GitLab accept LCOV and/or Cobertura XML natively.
 
 ---
 
@@ -197,7 +193,7 @@ jobs:
 2. **Single-Line Preamble Injection**: Temporarily injects an unobtrusive single-line `BASH_XTRACEFD` probe after UTF-8 BOM, shebang, and header comments, validating and allocating a trace file descriptor per process.
 3. **Safe Subprocess Execution**: Runs your test command in an isolated process group, piping inputs and exit codes transparently.
 4. **Defensive In-Place Restoration**: Protects target files via per-file advisory locking, atomic writes, preserved file permissions, multi-signal handling (`SIGINT`/`SIGTERM`/`SIGHUP`/`SIGQUIT`), and `.bashcoat.bak` backup files (detecting leftover backups or instrumentation markers on startup; note that uncatchable signals like `SIGKILL` or OOM require manual restoration from `.bashcoat.bak`).
-5. **LCOV Synthesis**: Computes execution counts per line in a single pass and outputs industry-standard `lcov.info` compatible with CI coverage reporters.
+5. **Report Synthesis**: Computes execution counts per line in a single pass and outputs industry-standard LCOV (`lcov.info`) or Cobertura XML (`coverage.xml`) compatible with CI coverage reporters.
 
 ---
 

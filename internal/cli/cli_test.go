@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -129,5 +130,132 @@ func TestRun_EmptyTargetRejectedAndQuietFlagDetection(t *testing.T) {
 	}
 	if HasQuietFlag([]string{"-q", "-q=false", "-t", "a.sh", "--", "bats"}) {
 		t.Error("expected HasQuietFlag to respect -q=false override")
+	}
+}
+
+func TestRun_CoberturaFormatDefaultOutput(t *testing.T) {
+	bash5 := findBash5(t)
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	targetPath := filepath.Join(tmpDir, "sample.sh")
+	script := `#!/usr/bin/env bash
+greet() {
+    echo "hi $1"
+}
+greet "user"
+`
+	if err := os.WriteFile(targetPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	args := []string{
+		"-t", targetPath,
+		"-f", "cobertura",
+		"--",
+		bash5, targetPath,
+	}
+
+	code := Run(context.Background(), args, strings.NewReader(""), stdout, stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr: %s)", code, stderr.String())
+	}
+
+	xmlBytes, err := os.ReadFile(filepath.Join(tmpDir, "coverage.xml"))
+	if err != nil {
+		t.Fatalf("expected default coverage.xml to be created: %v", err)
+	}
+
+	xmlStr := string(xmlBytes)
+	if !strings.Contains(xmlStr, "coverage-04.dtd") || !strings.Contains(xmlStr, `filename="sample.sh"`) {
+		t.Errorf("unexpected Cobertura XML content:\n%s", xmlStr)
+	}
+
+	var parsed struct {
+		XMLName      xml.Name `xml:"coverage"`
+		LineRate     float64  `xml:"line-rate,attr"`
+		LinesValid   int      `xml:"lines-valid,attr"`
+		LinesCovered int      `xml:"lines-covered,attr"`
+	}
+	if err := xml.Unmarshal(xmlBytes, &parsed); err != nil {
+		t.Fatalf("generated coverage.xml is not valid XML: %v\n%s", err, xmlStr)
+	}
+	if parsed.LineRate != 1 || parsed.LinesValid == 0 || parsed.LinesCovered != parsed.LinesValid {
+		t.Errorf("unexpected parsed Cobertura stats: %+v", parsed)
+	}
+
+	// Default lcov.info should NOT be created when -f cobertura is used
+	if _, err := os.Stat(filepath.Join(tmpDir, "lcov.info")); !os.IsNotExist(err) {
+		t.Errorf("expected lcov.info not to exist when -f cobertura is set, stat err: %v", err)
+	}
+}
+
+func TestRun_CoberturaFormatExplicitOutputAndDisable(t *testing.T) {
+	bash5 := findBash5(t)
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	targetPath := filepath.Join(tmpDir, "sample.sh")
+	if err := os.WriteFile(targetPath, []byte("#!/usr/bin/env bash\necho ok\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	customOut := filepath.Join(tmpDir, "reports", "cobertura.xml")
+	stderr := &bytes.Buffer{}
+	code := Run(context.Background(), []string{
+		"-t", targetPath,
+		"-format", "COBERTURA",
+		"-o", customOut,
+		"--",
+		bash5, targetPath,
+	}, strings.NewReader(""), &bytes.Buffer{}, stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr: %s)", code, stderr.String())
+	}
+	if _, err := os.Stat(customOut); err != nil {
+		t.Fatalf("expected custom output file %s: %v", customOut, err)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "coverage.xml")); !os.IsNotExist(err) {
+		t.Errorf("expected default coverage.xml not to be created when -o is explicit")
+	}
+
+	// Explicit -o "" disables file output even for cobertura format
+	stderr.Reset()
+	code = Run(context.Background(), []string{
+		"-t", targetPath,
+		"-f", "cobertura",
+		"-o", "",
+		"--",
+		bash5, targetPath,
+	}, strings.NewReader(""), &bytes.Buffer{}, stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0 when -o '' disables output, got %d (stderr: %s)", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "coverage.xml")); !os.IsNotExist(err) {
+		t.Errorf("expected no coverage.xml when -o '' is set")
+	}
+}
+
+func TestRun_InvalidFormatRejected(t *testing.T) {
+	stderr := &bytes.Buffer{}
+	code := Run(context.Background(), []string{"-f", "json", "-t", "nonexistent.sh", "--", "true"}, strings.NewReader(""), &bytes.Buffer{}, stderr)
+	if code != 2 {
+		t.Errorf("expected exit code 2 for unsupported format, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "unsupported format") {
+		t.Errorf("expected unsupported format error message, got:\n%s", stderr.String())
+	}
+}
+
+func TestSplitFlagAndCmdArgs_FormatFlag(t *testing.T) {
+	flagArgs, cmdArgs := splitFlagAndCmdArgs([]string{"-f", "--", "-t", "a.sh", "--", "bats", "test.bats"})
+	if strings.Join(flagArgs, " ") != "-f -- -t a.sh" {
+		t.Errorf("unexpected flagArgs: %v", flagArgs)
+	}
+	if strings.Join(cmdArgs, " ") != "bats test.bats" {
+		t.Errorf("unexpected cmdArgs: %v", cmdArgs)
 	}
 }
