@@ -24,6 +24,22 @@ func WriteLCOV(w io.Writer, profiles []*trace.Profile) error {
 			return err
 		}
 
+		if len(p.Functions) > 0 || p.FunctionsFound > 0 {
+			for _, fn := range p.Functions {
+				if _, err := fmt.Fprintf(w, "FN:%d,%s\n", fn.StartLine, fn.Name); err != nil {
+					return err
+				}
+			}
+			for _, fn := range p.Functions {
+				if _, err := fmt.Fprintf(w, "FNDA:%d,%s\n", fn.Calls, fn.Name); err != nil {
+					return err
+				}
+			}
+			if _, err := fmt.Fprintf(w, "FNF:%d\nFNH:%d\n", p.FunctionsFound, p.FunctionsHit); err != nil {
+				return err
+			}
+		}
+
 		// Sort line numbers ascending
 		lines := make([]int, 0, len(p.Hits))
 		for line := range p.Hits {

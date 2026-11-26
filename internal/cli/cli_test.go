@@ -67,12 +67,15 @@ greet "user"
 	if err != nil {
 		t.Fatalf("failed to read generated LCOV file: %v", err)
 	}
-	if !strings.Contains(string(lcovBytes), "SF:sample.sh") || !strings.Contains(string(lcovBytes), "end_of_record") {
-		t.Errorf("unexpected LCOV content:\n%s", string(lcovBytes))
+	lcovStr := string(lcovBytes)
+	for _, want := range []string{"SF:sample.sh", "FN:2,greet", "FNDA:1,greet", "FNF:1", "FNH:1", "end_of_record"} {
+		if !strings.Contains(lcovStr, want) {
+			t.Errorf("LCOV missing %q:\n%s", want, lcovStr)
+		}
 	}
 
-	if !strings.Contains(stdout.String(), "Coverage") || !strings.Contains(stdout.String(), "100.0%") {
-		t.Errorf("expected summary table in stdout, got:\n%s", stdout.String())
+	if !strings.Contains(stdout.String(), "Coverage") || !strings.Contains(stdout.String(), "Funcs") || !strings.Contains(stdout.String(), "1/1") || !strings.Contains(stdout.String(), "100.0%") {
+		t.Errorf("expected summary table with function coverage in stdout, got:\n%s", stdout.String())
 	}
 }
 
@@ -170,7 +173,7 @@ greet "user"
 	}
 
 	xmlStr := string(xmlBytes)
-	if !strings.Contains(xmlStr, "coverage-04.dtd") || !strings.Contains(xmlStr, `filename="sample.sh"`) {
+	if !strings.Contains(xmlStr, "coverage-04.dtd") || !strings.Contains(xmlStr, `filename="sample.sh"`) || !strings.Contains(xmlStr, `<method name="greet"`) {
 		t.Errorf("unexpected Cobertura XML content:\n%s", xmlStr)
 	}
 

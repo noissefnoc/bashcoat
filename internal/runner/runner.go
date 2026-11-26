@@ -236,6 +236,16 @@ func Run(ctx context.Context, cfg Config) ([]*trace.Profile, int, error) {
 
 	specs := make([]trace.TargetSpec, 0, len(states))
 	for _, s := range states {
+		fnSpecs := make([]trace.FuncSpec, len(s.stmtInfo.Functions))
+		for i, fn := range s.stmtInfo.Functions {
+			fnSpecs[i] = trace.FuncSpec{
+				Name:      fn.Name,
+				StartLine: fn.StartLine,
+				EndLine:   fn.EndLine,
+				ExecLines: fn.ExecLines,
+				FirstLine: fn.FirstLine,
+			}
+		}
 		specs = append(specs, trace.TargetSpec{
 			ID:         s.id,
 			SourceFile: s.displayPath,
@@ -245,6 +255,7 @@ func Run(ctx context.Context, cfg Config) ([]*trace.Profile, int, error) {
 			InsertLine: s.insertLine,
 			ExecLines:  s.stmtInfo.Lines,
 			LineMap:    s.stmtInfo.LineMap,
+			Functions:  fnSpecs,
 		})
 	}
 

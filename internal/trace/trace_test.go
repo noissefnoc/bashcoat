@@ -222,3 +222,56 @@ func TestParseAll_PipeInPWDAndSourcePath(t *testing.T) {
 		t.Errorf("expected dir/x|y.sh to have 1 hit, got %d", profiles[1].Hits[1])
 	}
 }
+
+func TestParseAll_FunctionCoverageAndDuplicateNameAggregation(t *testing.T) {
+	traceData := `+bashcoat_map|0|@p10:10|/repo|/repo/app.sh
++bashcoat|5|@p10:10|/repo/app.sh|bc_end| echo branch_a
++bashcoat|5|@p10:10|/repo/app.sh|bc_end| echo branch_a
+`
+	specs := []TargetSpec{
+		{
+			ID:         0,
+			SourceFile: "app.sh",
+			AbsPath:    "/repo/app.sh",
+			RealPath:   "/repo/app.sh",
+			WorkDir:    "/repo",
+			InsertLine: 1,
+			ExecLines:  map[int]bool{4: true, 8: true, 12: true},
+			Functions: []FuncSpec{
+				// Conditional duplicate definition of "notify" at lines 3-5 and 7-9
+				{Name: "notify", StartLine: 3, EndLine: 5, ExecLines: map[int]bool{4: true}, FirstLine: 4},
+				{Name: "notify", StartLine: 7, EndLine: 9, ExecLines: map[int]bool{8: true}, FirstLine: 8},
+				{Name: "unused", StartLine: 11, EndLine: 13, ExecLines: map[int]bool{12: true}, FirstLine: 12},
+			},
+		},
+	}
+
+	profiles, err := ParseAll(strings.NewReader(traceData), specs)
+	if err != nil {
+		t.Fatalf("ParseAll failed: %v", err)
+	}
+	p := profiles[0]
+	// "notify" declarations should be aggregated into a single entry -> 1/2 functions hit
+	if p.FunctionsFound != 2 || p.FunctionsHit != 1 {
+		t.Fatalf("expected 1/2 aggregated functions hit, got %d/%d: %+v", p.FunctionsHit, p.FunctionsFound, p.Functions)
+	}
+	if p.FunctionCoverageRate() != 50.0 {
+		t.Errorf("expected FunctionCoverageRate() = 50.0, got %v", p.FunctionCoverageRate())
+	}
+
+	notify := p.Functions[0]
+	if notify.Name != "notify" || notify.StartLine != 3 || notify.EndLine != 9 {
+		t.Errorf("unexpected aggregated notify span: %+v", notify)
+	}
+	if notify.Calls != 2 || notify.LinesFound != 2 || notify.LinesHit != 1 {
+		t.Errorf("expected notify Calls=2 LinesHit=1/2, got %+v", notify)
+	}
+	if len(notify.LineNums) != 2 || notify.LineNums[0] != 4 || notify.LineNums[1] != 8 {
+		t.Errorf("expected notify LineNums=[4 8], got %v", notify.LineNums)
+	}
+
+	unused := p.Functions[1]
+	if unused.Name != "unused" || unused.Calls != 0 || unused.LinesHit != 0 {
+		t.Errorf("unexpected unused function coverage: %+v", unused)
+	}
+}

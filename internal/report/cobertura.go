@@ -65,7 +65,18 @@ type coberturaClass struct {
 	Lines      coberturaLines   `xml:"lines"`
 }
 
-type coberturaMethods struct{}
+type coberturaMethods struct {
+	Methods []coberturaMethod `xml:"method"`
+}
+
+type coberturaMethod struct {
+	Name       string         `xml:"name,attr"`
+	Signature  string         `xml:"signature,attr"`
+	LineRate   float64        `xml:"line-rate,attr"`
+	BranchRate float64        `xml:"branch-rate,attr"`
+	Complexity float64        `xml:"complexity,attr"`
+	Lines      coberturaLines `xml:"lines"`
+}
 
 type coberturaLines struct {
 	Lines []coberturaLine `xml:"line"`
@@ -147,6 +158,26 @@ func WriteCoberturaWithOptions(w io.Writer, profiles []*trace.Profile, opts Cobe
 				})
 			}
 
+			methods := make([]coberturaMethod, 0, len(p.Functions))
+			for _, fn := range p.Functions {
+				fnLines := make([]coberturaLine, 0, len(fn.LineNums))
+				for _, l := range fn.LineNums {
+					fnLines = append(fnLines, coberturaLine{
+						Number: l,
+						Hits:   p.Hits[l],
+						Branch: false,
+					})
+				}
+				methods = append(methods, coberturaMethod{
+					Name:       fn.Name,
+					Signature:  "",
+					LineRate:   calcLineRate(fn.LinesHit, fn.LinesFound),
+					BranchRate: 0,
+					Complexity: 0,
+					Lines:      coberturaLines{Lines: fnLines},
+				})
+			}
+
 			pkgValid += p.LinesFound
 			pkgCovered += p.LinesHit
 
@@ -156,6 +187,7 @@ func WriteCoberturaWithOptions(w io.Writer, profiles []*trace.Profile, opts Cobe
 				LineRate:   calcLineRate(p.LinesHit, p.LinesFound),
 				BranchRate: 0,
 				Complexity: 0,
+				Methods:    coberturaMethods{Methods: methods},
 				Lines:      coberturaLines{Lines: lines},
 			})
 		}
