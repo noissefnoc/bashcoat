@@ -6,18 +6,42 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/noissefnoc/bashcoat/internal/instrument"
 )
 
-// Profile holds the line execution counts and summary statistics for a single source file.
-type Profile struct {
-	SourceFile string
-	Hits       map[int]int
+// FuncSpec describes a statically detected function declaration within a target file.
+type FuncSpec struct {
+	Name      string
+	StartLine int
+	EndLine   int
+	ExecLines map[int]bool
+	FirstLine int
+}
+
+// FunctionCoverage holds execution statistics for a single function.
+type FunctionCoverage struct {
+	Name       string
+	StartLine  int
+	EndLine    int
+	Calls      int
 	LinesFound int
 	LinesHit   int
+	LineNums   []int // sorted 1-based executable lines directly owned by this function
+}
+
+// Profile holds the line and function execution counts and summary statistics for a single source file.
+type Profile struct {
+	SourceFile     string
+	Hits           map[int]int
+	LinesFound     int
+	LinesHit       int
+	Functions      []FunctionCoverage
+	FunctionsFound int
+	FunctionsHit   int
 }
 
 // Coverage returns the line coverage percentage (0.0 to 100.0).
@@ -26,6 +50,14 @@ func (p *Profile) Coverage() float64 {
 		return 0.0
 	}
 	return float64(p.LinesHit) / float64(p.LinesFound) * 100.0
+}
+
+// FunctionCoverageRate returns the function coverage percentage (0.0 to 100.0).
+func (p *Profile) FunctionCoverageRate() float64 {
+	if p.FunctionsFound == 0 {
+		return 0.0
+	}
+	return float64(p.FunctionsHit) / float64(p.FunctionsFound) * 100.0
 }
 
 // TargetSpec describes a single instrumented target for trace attribution.
@@ -38,6 +70,7 @@ type TargetSpec struct {
 	InsertLine int
 	ExecLines  map[int]bool
 	LineMap    map[int]int
+	Functions  []FuncSpec
 }
 
 // Parse extracts execution hits from traceReader for a single targetFile.
@@ -260,15 +293,119 @@ func ParseAll(traceReader io.Reader, targets []TargetSpec) ([]*Profile, error) {
 			sourceFile = filepath.Clean(t.AbsPath)
 		}
 
+		fnCovs, fnHit := buildFunctionCoverage(t.Functions, hits)
+
 		profiles[i] = &Profile{
-			SourceFile: sourceFile,
-			Hits:       hits,
-			LinesFound: linesFound,
-			LinesHit:   linesHit,
+			SourceFile:     sourceFile,
+			Hits:           hits,
+			LinesFound:     linesFound,
+			LinesHit:       linesHit,
+			Functions:      fnCovs,
+			FunctionsFound: len(fnCovs),
+			FunctionsHit:   fnHit,
 		}
 	}
 
 	return profiles, nil
+}
+
+// buildFunctionCoverage maps line execution counts onto statically detected function
+// declarations. Duplicate declarations sharing the same name within a file (e.g. inside
+// conditional branches) are aggregated by name for LCOV/Cobertura compatibility.
+func buildFunctionCoverage(specs []FuncSpec, hits map[int]int) ([]FunctionCoverage, int) {
+	if len(specs) == 0 {
+		return nil, 0
+	}
+
+	type funcAgg struct {
+		name      string
+		startLine int
+		endLine   int
+		execLines map[int]bool
+		calls     int
+	}
+
+	byName := make(map[string]*funcAgg, len(specs))
+	order := make([]*funcAgg, 0, len(specs))
+
+	for _, fn := range specs {
+		defCalls := 0
+		if fn.FirstLine > 0 && hits[fn.FirstLine] > 0 {
+			defCalls = hits[fn.FirstLine]
+		} else {
+			minNonZero := 0
+			for l := range fn.ExecLines {
+				if c := hits[l]; c > 0 && (minNonZero == 0 || c < minNonZero) {
+					minNonZero = c
+				}
+			}
+			defCalls = minNonZero
+		}
+
+		agg, exists := byName[fn.Name]
+		if !exists {
+			agg = &funcAgg{
+				name:      fn.Name,
+				startLine: fn.StartLine,
+				endLine:   fn.EndLine,
+				execLines: make(map[int]bool, len(fn.ExecLines)),
+			}
+			byName[fn.Name] = agg
+			order = append(order, agg)
+		} else {
+			if fn.StartLine > 0 && (agg.startLine == 0 || fn.StartLine < agg.startLine) {
+				agg.startLine = fn.StartLine
+			}
+			if fn.EndLine > agg.endLine {
+				agg.endLine = fn.EndLine
+			}
+		}
+
+		for l := range fn.ExecLines {
+			agg.execLines[l] = true
+		}
+		agg.calls += defCalls
+	}
+
+	covs := make([]FunctionCoverage, 0, len(order))
+	fnHit := 0
+
+	for _, agg := range order {
+		lineNums := make([]int, 0, len(agg.execLines))
+		for l := range agg.execLines {
+			lineNums = append(lineNums, l)
+		}
+		sort.Ints(lineNums)
+
+		linesHit := 0
+		for _, l := range lineNums {
+			if hits[l] > 0 {
+				linesHit++
+			}
+		}
+		if linesHit > 0 {
+			fnHit++
+		}
+
+		covs = append(covs, FunctionCoverage{
+			Name:       agg.name,
+			StartLine:  agg.startLine,
+			EndLine:    agg.endLine,
+			Calls:      agg.calls,
+			LinesFound: len(lineNums),
+			LinesHit:   linesHit,
+			LineNums:   lineNums,
+		})
+	}
+
+	sort.Slice(covs, func(i, j int) bool {
+		if covs[i].StartLine != covs[j].StartLine {
+			return covs[i].StartLine < covs[j].StartLine
+		}
+		return covs[i].Name < covs[j].Name
+	})
+
+	return covs, fnHit
 }
 
 func parsePIDTag(tag string) (bashPID, rootPID string, ok bool) {

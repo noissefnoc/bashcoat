@@ -3,15 +3,26 @@ package executable
 
 import (
 	"bytes"
+	"sort"
 
 	"mvdan.cc/sh/v3/syntax"
 )
 
-// StatementInfo holds the detected executable lines and a mapping from any line
-// inside a multi-line leaf statement to its representative executable line.
+// FuncInfo holds static metadata for a Bash function declaration extracted from the AST.
+type FuncInfo struct {
+	Name      string
+	StartLine int
+	EndLine   int
+	ExecLines map[int]bool // 1-based executable lines directly owned by this function (excluding nested functions)
+	FirstLine int          // earliest 1-based executable line directly owned by this function (0 if none)
+}
+
+// StatementInfo holds the detected executable lines, multi-line statement mappings,
+// and statically declared function metadata.
 type StatementInfo struct {
-	Lines   map[int]bool
-	LineMap map[int]int
+	Lines     map[int]bool
+	LineMap   map[int]int
+	Functions []FuncInfo
 }
 
 // Detect parses a Bash script and returns a set of 1-based executable line numbers.
@@ -37,6 +48,8 @@ func DetectStatements(src []byte) (*StatementInfo, error) {
 
 	lines := make(map[int]bool)
 	lineMap := make(map[int]int)
+	var funcs []*FuncInfo
+	var funcStack []int
 
 	registerSpan := func(startLine, endLine int) {
 		if startLine <= 0 {
@@ -49,6 +62,13 @@ func DetectStatements(src []byte) (*StatementInfo, error) {
 		for l := startLine; l <= endLine; l++ {
 			lineMap[l] = startLine
 		}
+		if len(funcStack) > 0 {
+			fn := funcs[funcStack[len(funcStack)-1]]
+			fn.ExecLines[startLine] = true
+			if fn.FirstLine == 0 || startLine < fn.FirstLine {
+				fn.FirstLine = startLine
+			}
+		}
 	}
 
 	var walkFn func(node syntax.Node) bool
@@ -58,6 +78,23 @@ func DetectStatements(src []byte) (*StatementInfo, error) {
 		}
 
 		switch n := node.(type) {
+		case *syntax.FuncDecl:
+			if n.Name != nil && n.Name.Value != "" {
+				fn := &FuncInfo{
+					Name:      n.Name.Value,
+					StartLine: int(n.Pos().Line()),
+					EndLine:   int(n.End().Line()),
+					ExecLines: make(map[int]bool),
+				}
+				idx := len(funcs)
+				funcs = append(funcs, fn)
+				funcStack = append(funcStack, idx)
+				if n.Body != nil {
+					syntax.Walk(n.Body, walkFn)
+				}
+				funcStack = funcStack[:len(funcStack)-1]
+				return false
+			}
 		case *syntax.CallExpr:
 			if len(n.Args) > 0 || len(n.Assigns) > 0 {
 				registerSpan(int(n.Pos().Line()), int(n.End().Line()))
@@ -123,9 +160,24 @@ func DetectStatements(src []byte) (*StatementInfo, error) {
 
 	syntax.Walk(file, walkFn)
 
+	outFuncs := make([]FuncInfo, len(funcs))
+	for i, fn := range funcs {
+		outFuncs[i] = *fn
+	}
+	sort.Slice(outFuncs, func(i, j int) bool {
+		if outFuncs[i].StartLine != outFuncs[j].StartLine {
+			return outFuncs[i].StartLine < outFuncs[j].StartLine
+		}
+		if outFuncs[i].EndLine != outFuncs[j].EndLine {
+			return outFuncs[i].EndLine < outFuncs[j].EndLine
+		}
+		return outFuncs[i].Name < outFuncs[j].Name
+	})
+
 	return &StatementInfo{
-		Lines:   lines,
-		LineMap: lineMap,
+		Lines:     lines,
+		LineMap:   lineMap,
+		Functions: outFuncs,
 	}, nil
 }
 

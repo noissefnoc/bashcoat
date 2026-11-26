@@ -153,3 +153,53 @@ arr=(
 		t.Errorf("expected array closing line 23 to map to line 21, got %d", got)
 	}
 }
+
+func TestDetectStatements_FunctionsAndNesting(t *testing.T) {
+	script := `#!/usr/bin/env bash
+TOP=1
+outer() {
+  inner() {
+    echo "in"
+  }
+  echo "out"
+}
+function kw_fn {
+  echo "kw"
+}
+one() { echo "one"; }
+sub_fn() ( echo "sub" )
+if_fn() if true; then echo "ok"; fi
+`
+	info, err := DetectStatements([]byte(script))
+	if err != nil {
+		t.Fatalf("DetectStatements failed: %v", err)
+	}
+	if len(info.Functions) != 6 {
+		t.Fatalf("expected 6 functions, got %d: %+v", len(info.Functions), info.Functions)
+	}
+
+	byName := make(map[string]FuncInfo)
+	for _, fn := range info.Functions {
+		byName[fn.Name] = fn
+	}
+
+	outer := byName["outer"]
+	if outer.StartLine != 3 || outer.EndLine != 8 {
+		t.Errorf("outer span = [%d,%d], want [3,8]", outer.StartLine, outer.EndLine)
+	}
+	if !outer.ExecLines[7] || outer.ExecLines[5] {
+		t.Errorf("outer ExecLines should own line 7 and NOT inner line 5, got %v", outer.ExecLines)
+	}
+
+	inner := byName["inner"]
+	if inner.StartLine != 4 || inner.EndLine != 6 || !inner.ExecLines[5] || len(inner.ExecLines) != 1 {
+		t.Errorf("unexpected inner FuncInfo: %+v", inner)
+	}
+
+	for _, name := range []string{"kw_fn", "one", "sub_fn", "if_fn"} {
+		fn, ok := byName[name]
+		if !ok || len(fn.ExecLines) == 0 {
+			t.Errorf("expected %s to be detected with executable lines, got %+v", name, fn)
+		}
+	}
+}

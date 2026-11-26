@@ -140,7 +140,7 @@ func TestWriteSummary_ZeroLinesShowsNAAndWideCharsAlign(t *testing.T) {
 		}
 	}
 
-	// All-zero files -> Total should also be N/A
+	// All-zero files -> Total should also be N/A (both Coverage and Fn Cov columns)
 	buf.Reset()
 	err := WriteSummary(&buf, []*trace.Profile{
 		{SourceFile: "a.sh", LinesFound: 0, LinesHit: 0},
@@ -149,8 +149,107 @@ func TestWriteSummary_ZeroLinesShowsNAAndWideCharsAlign(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WriteSummary failed: %v", err)
 	}
-	if strings.Count(buf.String(), "     N/A") != 3 {
-		t.Errorf("expected 3 N/A entries (2 rows + Total), got:\n%s", buf.String())
+	if strings.Count(buf.String(), "     N/A") != 6 {
+		t.Errorf("expected 6 N/A entries (3 rows x 2 columns), got:\n%s", buf.String())
+	}
+}
+
+func TestWriteReports_WithFunctions(t *testing.T) {
+	profiles := []*trace.Profile{
+		{
+			SourceFile: "src/app.sh",
+			Hits:       map[int]int{4: 2, 5: 2, 10: 0},
+			LinesFound: 3,
+			LinesHit:   2,
+			Functions: []trace.FunctionCoverage{
+				{
+					Name:       "run",
+					StartLine:  3,
+					EndLine:    6,
+					Calls:      2,
+					LinesFound: 2,
+					LinesHit:   2,
+					LineNums:   []int{4, 5},
+				},
+				{
+					Name:       "unused",
+					StartLine:  9,
+					EndLine:    11,
+					Calls:      0,
+					LinesFound: 1,
+					LinesHit:   0,
+					LineNums:   []int{10},
+				},
+			},
+			FunctionsFound: 2,
+			FunctionsHit:   1,
+		},
+		{
+			SourceFile: "src/lib.sh",
+			Hits:       map[int]int{3: 1},
+			LinesFound: 1,
+			LinesHit:   1,
+			Functions: []trace.FunctionCoverage{
+				{
+					Name:       "helper",
+					StartLine:  2,
+					EndLine:    4,
+					Calls:      1,
+					LinesFound: 1,
+					LinesHit:   1,
+					LineNums:   []int{3},
+				},
+			},
+			FunctionsFound: 1,
+			FunctionsHit:   1,
+		},
+	}
+
+	var lcovBuf bytes.Buffer
+	if err := WriteLCOV(&lcovBuf, profiles); err != nil {
+		t.Fatalf("WriteLCOV failed: %v", err)
+	}
+	lcovOut := lcovBuf.String()
+	for _, want := range []string{
+		"FN:3,run\n", "FN:9,unused\n",
+		"FNDA:2,run\n", "FNDA:0,unused\n",
+		"FNF:2\n", "FNH:1\n",
+		"FN:2,helper\n", "FNDA:1,helper\n",
+		"FNF:1\n", "FNH:1\n",
+	} {
+		if !strings.Contains(lcovOut, want) {
+			t.Errorf("LCOV missing %q:\n%s", want, lcovOut)
+		}
+	}
+
+	var xmlBuf bytes.Buffer
+	if err := WriteCoberturaWithOptions(&xmlBuf, profiles, CoberturaOptions{Timestamp: time.Unix(1, 0)}); err != nil {
+		t.Fatalf("WriteCobertura failed: %v", err)
+	}
+	var parsed coberturaCoverage
+	if err := xml.Unmarshal(xmlBuf.Bytes(), &parsed); err != nil {
+		t.Fatalf("Cobertura XML failed to unmarshal: %v\n%s", err, xmlBuf.String())
+	}
+	methods := parsed.Packages.Packages[0].Classes.Classes[0].Methods.Methods
+	if len(methods) != 2 {
+		t.Fatalf("expected 2 methods in Cobertura XML for src/app.sh, got %d", len(methods))
+	}
+	if methods[0].Name != "run" || methods[0].LineRate != 1 || len(methods[0].Lines.Lines) != 2 {
+		t.Errorf("unexpected method[0]: %+v", methods[0])
+	}
+	if methods[1].Name != "unused" || methods[1].LineRate != 0 || len(methods[1].Lines.Lines) != 1 {
+		t.Errorf("unexpected method[1]: %+v", methods[1])
+	}
+
+	var sumBuf bytes.Buffer
+	if err := WriteSummary(&sumBuf, profiles); err != nil {
+		t.Fatalf("WriteSummary failed: %v", err)
+	}
+	sumOut := sumBuf.String()
+	for _, want := range []string{"Funcs", "Fn Cov", "1/2", "50.0%", "1/1", "100.0%", "2/3", "66.7%"} {
+		if !strings.Contains(sumOut, want) {
+			t.Errorf("summary output missing %q:\n%s", want, sumOut)
+		}
 	}
 }
 

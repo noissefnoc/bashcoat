@@ -76,9 +76,9 @@ bashcoat -t examples/src/deploy.sh -- bats examples/test/deploy.bats
 Output:
 
 ```text
-File                   | Lines | Covered | Coverage
------------------------+-------+---------+---------
-examples/src/deploy.sh |    13 |      11 |    84.6%
+File                   | Lines | Covered | Coverage | Funcs |   Fn Cov
+-----------------------+-------+---------+----------+-------+---------
+examples/src/deploy.sh |    13 |      11 |    84.6% |   1/1 |   100.0%
 ```
 
 A standard `lcov.info` file is automatically generated in your working directory.
@@ -163,7 +163,7 @@ jobs:
 
 ## Report Formats & Integrations
 
-`bashcoat` natively outputs **LCOV (`lcov.info`)** and **Cobertura XML (`coverage.xml`)**:
+`bashcoat` natively outputs **LCOV (`lcov.info`)** (including `DA`/`LF`/`LH` line records and `FN`/`FNDA`/`FNF`/`FNH` function coverage records) and **Cobertura XML (`coverage.xml`)** (including `<lines>` and per-function `<methods>` elements):
 
 - **GitHub Code Quality (`actions/upload-code-coverage`)**: Pass `-f cobertura` to output Cobertura XML directly (no external converter needed). In GitHub Actions (with `code-quality: write` permission on the job):
   ```yaml
@@ -189,11 +189,11 @@ jobs:
 
 ## How It Works
 
-1. **AST-Precise Statement Identification**: Uses `mvdan.cc/sh/v3/syntax` to walk the Bash Abstract Syntax Tree, distinguishing executable statements (including `(( ... ))`, `[[ ... ]]`, `let`, and multi-line constructs) from comments, blank lines, function declarations, and syntax boundaries.
+1. **AST-Precise Statement & Function Identification**: Uses `mvdan.cc/sh/v3/syntax` to walk the Bash Abstract Syntax Tree, distinguishing executable statements (including `(( ... ))`, `[[ ... ]]`, `let`, and multi-line constructs) from comments, blank lines, function declarations, and syntax boundaries, while recording innermost function ownership for every executable statement.
 2. **Single-Line Preamble Injection**: Temporarily injects an unobtrusive single-line `BASH_XTRACEFD` probe after UTF-8 BOM, shebang, and header comments, validating and allocating a trace file descriptor per process.
 3. **Safe Subprocess Execution**: Runs your test command in an isolated process group, piping inputs and exit codes transparently.
 4. **Defensive In-Place Restoration**: Protects target files via per-file advisory locking, atomic writes, preserved file permissions, multi-signal handling (`SIGINT`/`SIGTERM`/`SIGHUP`/`SIGQUIT`), and `.bashcoat.bak` backup files (detecting leftover backups or instrumentation markers on startup; note that uncatchable signals like `SIGKILL` or OOM require manual restoration from `.bashcoat.bak`).
-5. **Report Synthesis**: Computes execution counts per line in a single pass and outputs industry-standard LCOV (`lcov.info`) or Cobertura XML (`coverage.xml`) compatible with CI coverage reporters.
+5. **Report Synthesis**: Computes execution counts per line and maps them onto statically extracted functions with zero runtime overhead, outputting industry-standard LCOV (`lcov.info`) or Cobertura XML (`coverage.xml`) compatible with CI coverage reporters.
 
 ---
 
@@ -204,6 +204,11 @@ jobs:
 - **Summary Output Stream**: By default, `-summary` prints the table to `stdout`; pass `-summary=false` or `-q` if your test command's `stdout` is piped or asserted strictly.
 - **Multi-Line `eval` `LINENO` Offset**: In Bash, executing a multi-line string via `eval` advances `LINENO` from the `eval` call line, so lines inside the evaluated string may be attributed to subsequent line numbers in the enclosing script.
 - **Reserved Trace Delimiter**: Target script paths containing the literal sequence `|bc_end|` are unsupported because `|bc_end|` is used as the internal `PS4` field delimiter.
+- **Function Coverage (AST Line Mapping) Edge Cases**: Function coverage maps line hits onto statically parsed `FuncDecl` nodes with zero runtime overhead, which carries a few known trade-offs:
+  - *Multiple Functions on One Line*: Functions defined on the same physical line (e.g. `f1() { echo 1; }; f2() { echo 2; }`) share a single line number and cannot be distinguished individually. **Workaround**: format scripts with [`shfmt`](https://github.com/mvdan/sh) (or place each function on its own line) so each function spans distinct line numbers.
+  - *Dynamic Function Definitions*: Functions defined dynamically via `eval` are not present in the static AST and are excluded from function coverage.
+  - *Duplicate Function Names in One File*: Conditional redefinitions sharing the same name within a single file are aggregated by function name in LCOV/Cobertura reports for tool compatibility (uncovered branch lines still appear as `0` hits in line coverage).
+  - *Approximate Call Counts (`FNDA`)*: Function hit counts (`FNDA`) are approximated from the execution count of the function's first executable line (e.g. a function whose first line is a `for` loop reports loop iterations rather than entry count); function coverage ratio (`FNH`/`FNF`) is unaffected.
 
 ---
 

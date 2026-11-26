@@ -27,21 +27,36 @@ func WriteSummary(w io.Writer, profiles []*trace.Profile) error {
 	if len(sortedProfiles) > 1 {
 		maxFileLen = 5 // "Total"
 	}
+	maxFuncsLen := 5 // "Funcs"
 	totalFound := 0
 	totalHit := 0
+	totalFuncsFound := 0
+	totalFuncsHit := 0
 
 	for _, p := range sortedProfiles {
 		if width := displayWidth(p.SourceFile); width > maxFileLen {
 			maxFileLen = width
 		}
+		if fStr := fmt.Sprintf("%d/%d", p.FunctionsHit, p.FunctionsFound); len(fStr) > maxFuncsLen {
+			maxFuncsLen = len(fStr)
+		}
 		totalFound += p.LinesFound
 		totalHit += p.LinesHit
+		totalFuncsFound += p.FunctionsFound
+		totalFuncsHit += p.FunctionsHit
+	}
+	if len(sortedProfiles) > 1 {
+		if fStr := fmt.Sprintf("%d/%d", totalFuncsHit, totalFuncsFound); len(fStr) > maxFuncsLen {
+			maxFuncsLen = len(fStr)
+		}
 	}
 
-	sep := fmt.Sprintf("%s-+-------+---------+---------", strings.Repeat("-", maxFileLen))
+	sep := fmt.Sprintf("%s-+-------+---------+----------+-%s-+---------",
+		strings.Repeat("-", maxFileLen), strings.Repeat("-", maxFuncsLen))
 
 	// Header
-	if _, err := fmt.Fprintf(w, "\n%s | Lines | Covered | Coverage\n", padRightDisplay("File", maxFileLen)); err != nil {
+	if _, err := fmt.Fprintf(w, "\n%s | Lines | Covered | Coverage | %*s |   Fn Cov\n",
+		padRightDisplay("File", maxFileLen), maxFuncsLen, "Funcs"); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(w, sep); err != nil {
@@ -50,8 +65,10 @@ func WriteSummary(w io.Writer, profiles []*trace.Profile) error {
 
 	// Rows
 	for _, p := range sortedProfiles {
-		if _, err := fmt.Fprintf(w, "%s | %5d | %7d | %s\n",
-			padRightDisplay(p.SourceFile, maxFileLen), p.LinesFound, p.LinesHit, formatCoverage(p.LinesFound, p.LinesHit)); err != nil {
+		fStr := fmt.Sprintf("%d/%d", p.FunctionsHit, p.FunctionsFound)
+		if _, err := fmt.Fprintf(w, "%s | %5d | %7d | %s | %*s | %s\n",
+			padRightDisplay(p.SourceFile, maxFileLen), p.LinesFound, p.LinesHit, formatCoverage(p.LinesFound, p.LinesHit),
+			maxFuncsLen, fStr, formatCoverage(p.FunctionsFound, p.FunctionsHit)); err != nil {
 			return err
 		}
 	}
@@ -61,8 +78,10 @@ func WriteSummary(w io.Writer, profiles []*trace.Profile) error {
 		if _, err := fmt.Fprintln(w, sep); err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintf(w, "%s | %5d | %7d | %s\n",
-			padRightDisplay("Total", maxFileLen), totalFound, totalHit, formatCoverage(totalFound, totalHit)); err != nil {
+		fStr := fmt.Sprintf("%d/%d", totalFuncsHit, totalFuncsFound)
+		if _, err := fmt.Fprintf(w, "%s | %5d | %7d | %s | %*s | %s\n",
+			padRightDisplay("Total", maxFileLen), totalFound, totalHit, formatCoverage(totalFound, totalHit),
+			maxFuncsLen, fStr, formatCoverage(totalFuncsFound, totalFuncsHit)); err != nil {
 			return err
 		}
 	}
